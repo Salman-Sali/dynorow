@@ -1,0 +1,9 @@
+[package]
+name = "example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aws-config = { version = "1.8.3", features = ["behavior-version-latest"] }
+aws-sdk-dynamodb = "1.86.0"
+dynorow = { workspace = true }
