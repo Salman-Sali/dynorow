@@ -227,7 +227,7 @@ impl KeyValue {
                     return value.contains(partial_pk_value);
                 }
                 return false;
-                
+
             },
         }
     }
@@ -250,8 +250,31 @@ impl KeyValue {
                     return value == pk_value;
                 }
                 return false;
-                
+
             },
         }
     }
+
+    pub fn is_partition_key_value_starts_and_ends_with(&self, partial_pk_value: &str, end_pk_value: &str,) -> bool {
+            match self {
+                KeyValue::CompositeKey {
+                    partition_key: _,
+                    partition_key_value,
+                    sort_key: _,
+                    sort_key_value: _,
+                } => {
+                    if let Ok(value) = partition_key_value.as_s() {
+                        return value.starts_with(partial_pk_value) && value.ends_with(end_pk_value);
+                    }
+                    return false;
+                },
+                KeyValue::PartitionKey { key: _, value } => {
+                    if let Ok(value) = value.as_s() {
+                        return value.starts_with(partial_pk_value) && value.ends_with(end_pk_value);
+                    }
+                    return false;
+
+                },
+            }
+        }
 }
