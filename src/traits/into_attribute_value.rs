@@ -28,6 +28,12 @@ impl IntoAttributeValue for u32 {
     }
 }
 
+impl IntoAttributeValue for f32 {
+    fn into_attribute_value(&self) -> AttributeValue {
+        AttributeValue::N(self.to_string())
+    }
+}
+
 impl IntoAttributeValue for bool {
     fn into_attribute_value(&self) -> AttributeValue {
         AttributeValue::Bool(*self)
