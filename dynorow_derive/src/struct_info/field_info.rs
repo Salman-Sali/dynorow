@@ -3,7 +3,6 @@ use syn::{Field, PathArguments, PathSegment, Type};
 
 use super::{field_type::FieldType, key::Key};
 
-#[derive(Debug)]
 pub struct FieldInfo {
     pub name: String,
     pub key: Key,
