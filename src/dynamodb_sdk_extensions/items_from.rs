@@ -1,6 +1,4 @@
-use aws_sdk_dynamodb::
-    operation::put_item::builders::PutItemFluentBuilder
-;
+use aws_sdk_dynamodb::operation::put_item::builders::PutItemFluentBuilder;
 
 use crate::traits::as_attribute_key_values::AsAttributeKeyValues;
 

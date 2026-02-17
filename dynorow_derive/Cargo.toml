@@ -2,6 +2,10 @@
 name = "dynorow_derive"
 version = "0.1.1"
 edition = "2024"
+description = "Strongly typed, derive-based models and expression builders for Amazon DynamoDB."
+repository = "https://github.com/Salman-Sali/dynorow"
+license = "MIT"
+keywords = ["aws", "dynamodb", "database"]
 
 [lib]
 proc-macro = true
@@ -9,4 +13,5 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1.0.95"
 quote = "1.0.40"
+regex = "1.12.3"
 syn = "2.0.104"

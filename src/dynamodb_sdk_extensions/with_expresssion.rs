@@ -25,21 +25,32 @@ impl WithExpression for UpdateItemFluentBuilder {
     }
 }
 
-fn generate_expression_attribute_values(mut builder: UpdateItemFluentBuilder, variable_value_map: &HashMap<String, (String, AttributeValue)>) -> UpdateItemFluentBuilder {
+fn generate_expression_attribute_values(
+    mut builder: UpdateItemFluentBuilder,
+    variable_value_map: &HashMap<String, (String, AttributeValue)>,
+) -> UpdateItemFluentBuilder {
     for variable_value in variable_value_map {
         builder = builder.expression_attribute_values(variable_value.0, variable_value.1.1.clone());
     }
     builder
 }
 
-fn generate_expression_attribute_names(mut builder: UpdateItemFluentBuilder, variable_value_map: &HashMap<String, (String, AttributeValue)>) -> UpdateItemFluentBuilder {
+fn generate_expression_attribute_names(
+    mut builder: UpdateItemFluentBuilder,
+    variable_value_map: &HashMap<String, (String, AttributeValue)>,
+) -> UpdateItemFluentBuilder {
     for variable_value in variable_value_map {
-        builder = builder.expression_attribute_names(format!("#{}", variable_value.1.0), variable_value.1.0.clone());
+        builder = builder.expression_attribute_names(
+            format!("#{}", variable_value.1.0),
+            variable_value.1.0.clone(),
+        );
     }
     builder
 }
 
-fn generate_update_expression(variable_value_map: &HashMap<String, (String, AttributeValue)>) -> String {
+fn generate_update_expression(
+    variable_value_map: &HashMap<String, (String, AttributeValue)>,
+) -> String {
     const SET: &str = "SET";
     let mut result = String::from(SET);
     for variable_value in variable_value_map {
@@ -79,6 +90,6 @@ fn is_key(key: &KeyValue, value_key: &String) -> bool {
             sort_key,
             sort_key_value: _,
         } => partition_key == value_key || sort_key == value_key,
-        KeyValue::PartitionKey { key, value: _, } => key == value_key,
+        KeyValue::PartitionKey { key, value: _ } => key == value_key,
     }
 }

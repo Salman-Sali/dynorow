@@ -20,7 +20,7 @@ impl ConditionalOpeartion {
 #[derive(Debug, Clone)]
 pub enum RelationalOperation {
     Equals(AttributeValue),
-    Between(AttributeValue, AttributeValue)
+    Between(AttributeValue, AttributeValue),
     // In(Vec<AttributeValue>)
     // LessThan,
     // LessThanOrEqualTo,
@@ -33,8 +33,10 @@ pub enum RelationalOperation {
 impl RelationalOperation {
     pub fn to_string(&self, context: &mut ExpressionContext) -> String {
         match self {
-            RelationalOperation::Equals(_) => format!("= :v{}", context.next()),
-            RelationalOperation::Between(_, _) => format!("BETWEEN :v{} AND :v{}", context.next(), context.next()),
+            RelationalOperation::Equals(_) => format!("= {}", context.next()),
+            RelationalOperation::Between(_, _) => {
+                format!("BETWEEN {} AND {}", context.next(), context.next())
+            }
         }
     }
 }

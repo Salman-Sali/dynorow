@@ -2,6 +2,11 @@
 name = "dynorow"
 version = "0.1.2"
 edition = "2024"
+description = "Strongly typed, derive-based models and expression builders for Amazon DynamoDB."
+repository = "https://github.com/Salman-Sali/dynorow"
+readme = "Readme.md"
+license = "MIT"
+keywords = ["aws", "dynamodb", "database"]
 
 [dependencies]
 dynorow_derive = { workspace = true }

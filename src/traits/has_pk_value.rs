@@ -1,3 +1,3 @@
-pub trait HasPkValue {
-    fn get_pk_value() -> String;
+pub trait HasStaticPkValue {
+    fn get_static_pk_value() -> String;
 }

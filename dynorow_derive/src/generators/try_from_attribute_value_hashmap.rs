@@ -1,12 +1,13 @@
-use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 
 use crate::{
-    struct_info::{StructInfo, field_info::FieldInfo, field_type::FieldType},
+    struct_info::{StructInfo, field_info::FieldInfo},
     utils::as_expr::AsExpr,
 };
 
-pub fn generate_try_from_attribute_value_hashmap(struct_info: &StructInfo) -> proc_macro2::TokenStream {
+pub fn generate_try_from_attribute_value_hashmap(
+    struct_info: &StructInfo,
+) -> proc_macro2::TokenStream {
     let struct_name = struct_info.struct_name.as_expr();
     let field_tokens = generate_attribute_value_to_fields_token(&struct_info);
     let return_token = generate_return(struct_info);
@@ -14,7 +15,7 @@ pub fn generate_try_from_attribute_value_hashmap(struct_info: &StructInfo) -> pr
         impl TryFrom<std::collections::HashMap<String, dynorow::aws_sdk_dynamodb::types::AttributeValue>> for #struct_name {
             type Error = dynorow::error::Error;
 
-            fn try_from(items: std::collections::HashMap<String, dynorow::aws_sdk_dynamodb::types::AttributeValue>) -> Result<Self, Self::Error> {
+            fn try_from(mut items: std::collections::HashMap<String, dynorow::aws_sdk_dynamodb::types::AttributeValue>) -> Result<Self, Self::Error> {
                 #field_tokens
 
                 #return_token
@@ -35,13 +36,8 @@ fn generate_attribute_value_to_fields_token(struct_info: &StructInfo) -> proc_ma
             true => quote! {None},
             false => quote! {return Err(dynorow::error::Error::value_not_found(#field_name_str))},
         };
-        let is_null_check_token = match field.is_option {
-            true => quote! {Some(verified_on) if verified_on.is_null() => None,},
-            false => quote! {},
-        };
         quote::quote! {
-            let #field_name_expr: #field_type_token = match items.get(#field_key_str) {
-                #is_null_check_token
+            let #field_name_expr: #field_type_token = match items.remove(#field_key_str) {
                 Some(#field_name_expr) => {
                     #attribute_parse_token
                 },
@@ -55,57 +51,21 @@ fn generate_attribute_value_to_fields_token(struct_info: &StructInfo) -> proc_ma
 
 fn generate_attribute_parse_token(field: &FieldInfo) -> proc_macro2::TokenStream {
     let field_name_expr = field.name.as_expr();
-    let field_name_str = field.name.to_string();
-    let field_type_str = field.get_type_str();
-    let field_key_str = field.get_key_str();
-    //let field_type_token = field.get_type_token();
-    let field_type_without_option = field.field_syn_type.clone();
+    let field_type_token = field.get_type_token();
+    let field_str = field.get_type_str();
 
-    let matching_token: TokenStream;
-    let parsing_return_token = match field.is_option {
-        true => quote!{Some(parsed_value)},
-        false => quote! {parsed_value},
-    };
-    let mut parsing_token: TokenStream = quote::quote! {
-                match x.parse() {
-                    Ok(parsed_value) => #parsing_return_token,
-                    Err(e) => return Err(dynorow::error::Error::parse_error(#field_name_str, #field_type_str, #field_key_str, format!("{:?}", #field_name_expr), e.to_string()))
-                }
-            };
-    match field.field_type {
-        FieldType::SerdeJson(_) => {
-            matching_token = quote! {as_s()};
-            parsing_token = quote::quote! {
-                match &x.parse::<dynorow::serde_field::SerdeField::<#field_type_without_option>>() {
-                    Ok(parsed_value) => {
-                        let parsed_value = parsed_value.value.clone();
-                        #parsing_return_token
-                    },
-                    Err(e) => return Err(dynorow::error::Error::parse_error(#field_name_str, #field_type_str, #field_key_str, format!("{:?}", #field_name_expr), e.to_string()))
-                }
-            };
+    match field.is_serde {
+        true => quote! {
+            dynorow::serde_json::from_str(
+                #field_name_expr
+                    .as_s()
+                    .map_err(|e| dynorow::error::Error::parse_error(#field_name_expr.clone(), #field_str, format!("{:?}", e)))?,
+            )
+                .map_err(|e| dynorow::error::Error::parse_error(#field_name_expr.clone(), #field_str, format!("{:?}", e)))?
         },
-        FieldType::VecString => {
-            matching_token = quote! {as_ss()};
-            parsing_token = quote! {x.clone()}
-        }
-        FieldType::String => {
-            matching_token = quote::quote! {as_s()};
+        false => quote! {
+            <#field_type_token as dynorow::traits::from_attribute_value::FromAttributeValue<#field_type_token>>::from_attribute_value(#field_name_expr)?
         },
-        FieldType::f32 | FieldType::i32 | FieldType::u32 => {
-            matching_token = quote::quote! {as_n()};
-        },
-        FieldType::bool => {
-            matching_token = quote::quote! {as_bool()};
-            parsing_token = quote! {*x}
-        }
-    }
-
-    quote::quote! {
-        match #field_name_expr.#matching_token {
-            Ok(x) => #parsing_token,
-            Err(_) => return Err(dynorow::error::Error::parse_error(#field_name_str, #field_type_str, #field_key_str, format!("{:?}", #field_name_expr), String::new()))
-        }
     }
 }
 

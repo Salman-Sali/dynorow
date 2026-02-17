@@ -1,4 +1,4 @@
-use quote::{quote, ToTokens};
+use quote::{ToTokens, quote};
 use syn::{Field, PathArguments, PathSegment, Type};
 
 use super::{field_type::FieldType, key::Key};
@@ -10,18 +10,28 @@ pub struct FieldInfo {
     pub field_type: FieldType,
     pub field_syn_type: Type,
     pub ignore: bool,
-    pub is_option: bool
+    pub is_option: bool,
+    pub is_serde: bool,
 }
 
 impl FieldInfo {
-    pub fn new(name: String, key: Key, field_type: String, field_syn_type: Type, ignore: bool, is_option: bool) -> Self {
+    pub fn new(
+        name: String,
+        key: Key,
+        field_type: String,
+        field_syn_type: Type,
+        ignore: bool,
+        is_option: bool,
+        is_serde: bool,
+    ) -> Self {
         Self {
             name,
             key,
             field_type: FieldType::from(field_type),
             field_syn_type,
             ignore,
-            is_option
+            is_option,
+            is_serde,
         }
     }
 
@@ -30,7 +40,8 @@ impl FieldInfo {
             Key::Key(x) => x,
             Key::Pk(x) => x,
             Key::Sk(x) => x,
-        }.clone()
+        }
+        .clone()
     }
 
     pub fn as_projection_variable(&self) -> String {
@@ -62,7 +73,8 @@ struct FieldScan {
     pub is_pk_key: bool,
     pub is_sk_key: bool,
     pub ignore: bool,
-    pub is_option: bool
+    pub is_option: bool,
+    pub is_serde: bool,
 }
 
 impl Into<FieldInfo> for FieldScan {
@@ -74,19 +86,18 @@ impl Into<FieldInfo> for FieldScan {
             self.field_syn_type,
             self.ignore,
             self.is_option,
+            self.is_serde,
         )
     }
 }
 
 fn get_last_path_segment(ty: &Type) -> &PathSegment {
-    match ty {        
-        Type::Path(type_path) => {
-            match type_path.path.segments.last() {
-                Some(segment) => {
-                    return segment;
-                },
-                None => panic!("Error while fetching type name."),
+    match ty {
+        Type::Path(type_path) => match type_path.path.segments.last() {
+            Some(segment) => {
+                return segment;
             }
+            None => panic!("Error while fetching type name."),
         },
         _ => panic!("Unhandled syn::Type"),
     }
@@ -95,7 +106,6 @@ fn get_last_path_segment(ty: &Type) -> &PathSegment {
 fn get_type_ident(ty: &Type) -> String {
     //get_last_path_segment(ty).ident.to_string()
     match ty {
-        
         Type::Path(type_path) => type_path.into_token_stream().to_string(),
         _ => panic!("Unhandled syn::Type"),
     }
@@ -104,19 +114,14 @@ fn get_type_ident(ty: &Type) -> String {
 fn get_generic_type_argument(ty: &Type) -> Type {
     let segement = get_last_path_segment(ty);
     match &segement.arguments {
-        PathArguments::AngleBracketed(args) => {
-            match args.args.first() {
-                Some(generic_argument) => {
-                    match generic_argument {
-                        syn::GenericArgument::Type(t) => return t.clone(),
-                        _ => panic!("Unhandled generic argument.")
-                    }
-                },
-                None => panic!("Type does not have any generic argument."),
-            }
-            
+        PathArguments::AngleBracketed(args) => match args.args.first() {
+            Some(generic_argument) => match generic_argument {
+                syn::GenericArgument::Type(t) => return t.clone(),
+                _ => panic!("Unhandled generic argument."),
+            },
+            None => panic!("Type does not have any generic argument."),
         },
-        _ => panic!("Unhandled path segment argument.")
+        _ => panic!("Unhandled path segment argument."),
     }
 }
 
@@ -128,7 +133,7 @@ impl FieldScan {
         if field_type.starts_with("Option") {
             is_option = true;
             let generic_argument_type = get_generic_type_argument(&field.ty);
-            field_syn_type = generic_argument_type.clone();            
+            field_syn_type = generic_argument_type.clone();
             field_type = get_type_ident(&generic_argument_type);
         }
 
@@ -142,7 +147,8 @@ impl FieldScan {
             is_pk_key: false,
             is_sk_key: false,
             ignore: false,
-            is_option
+            is_option,
+            is_serde: false,
         }
     }
 
@@ -162,6 +168,10 @@ impl FieldScan {
 
     fn mark_as_ignored(&mut self) {
         self.ignore = true;
+    }
+
+    fn mark_as_serde(&mut self) {
+        self.is_serde = true;
     }
 
     fn set_key(&mut self, key: String) {
@@ -201,6 +211,7 @@ impl From<&Field> for FieldInfo {
                         field_scan.set_key(key.to_string())
                     }
                     "ignore" => field_scan.mark_as_ignored(),
+                    "serde" => field_scan.mark_as_serde(),
                     _ => {}
                 }
 

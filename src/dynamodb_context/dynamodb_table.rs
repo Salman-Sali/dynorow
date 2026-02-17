@@ -1,6 +1,8 @@
 use crate::{
-    Expression, GetListResult,
-    dynamodb_context::expression::expression_builder::BuildExpression,
+    GetListResult, UpdateExpression,
+    dynamodb_context::expression::conditional::{
+        ConditionalExpression, expression_builder::BuildConditionalExpression,
+    },
     dynamodb_sdk_extensions::{
         items_from::ItemsFrom, with_expresssion::WithExpression, with_key::WithKey,
     },
@@ -8,7 +10,7 @@ use crate::{
     key::KeyValue,
     traits::{
         as_key_value::AsPkAvailableCompositeKeyValue, fetchable::Fetchable, has_key::HasKey,
-        has_pk_value::HasPkValue, insertable::Insertable, updatable::Updatable,
+        has_pk_value::HasStaticPkValue, insertable::Insertable, updatable::Updatable,
     },
 };
 
@@ -126,27 +128,28 @@ impl<'a> DynamodbTable<'a> {
         self.get_maybe(key).await
     }
 
-    pub async fn get_list_with_key_value<T: Fetchable + HasKey>(
+    pub async fn get_list_with_pk_value<T: Fetchable + HasKey>(
         &self,
-        key_value: KeyValue,
+        pk_value: KeyValue,
         count: u16,
         last_key_value: Option<KeyValue>,
-        accending: bool
+        accending: bool,
     ) -> Result<GetListResult<T>, Error> {
+        let key_value = pk_value.into_partition_key_value();
         let expression = key_value.into_conditional_expression();
         self.get_list_with_condition(expression, count, last_key_value, accending)
             .await
     }
 
-    pub async fn get_list<T: Fetchable + HasKey + HasPkValue>(
+    pub async fn get_list<T: Fetchable + HasKey + HasStaticPkValue>(
         &self,
         count: u16,
         last_key_value: Option<KeyValue>,
-        accending: bool
+        accending: bool,
     ) -> Result<GetListResult<T>, Error> {
         let key_expression = T::get_key()
             .get_partition_key()
-            .string_equals(&T::get_pk_value());
+            .string_equals(&T::get_static_pk_value());
 
         self.get_list_with_condition(key_expression, count, last_key_value, accending)
             .await
@@ -154,10 +157,10 @@ impl<'a> DynamodbTable<'a> {
 
     pub async fn get_list_with_condition<T: Fetchable + HasKey>(
         &self,
-        key_conditional_expression: Expression,
+        key_conditional_expression: ConditionalExpression,
         count: u16,
         last_key_value: Option<KeyValue>,
-        accending: bool
+        accending: bool,
     ) -> Result<GetListResult<T>, Error> {
         let mut query = self
             .client
@@ -241,8 +244,74 @@ impl<'a> DynamodbTable<'a> {
             })
     }
 
+    pub async fn update_with_expression<T: Updatable>(
+        &self,
+        key_value: KeyValue,
+        expression: UpdateExpression,
+    ) -> Result<(), Error> {
+        self.client
+            .update_item()
+            .table_name(&self.table_name)
+            .set_key(Some(key_value.clone().into_hash_map()))
+            .update_expression(expression.to_string())
+            .set_expression_attribute_names(Some(expression.get_expression_attribute_names()))
+            .set_expression_attribute_values(Some(expression.get_expression_attribute_values()))
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+                eprintln!(
+                    "Error : {:?},  Key: {:?} update expression: {:?}",
+                    e, key_value, expression
+                );
+                Error::sdk_error("Dynamodb delete item failed.", e)
+            })
+    }
+
+    pub async fn update_with_condition<T: Updatable>(
+        &self,
+        key_value: KeyValue,
+        update: UpdateExpression,
+        condition: ConditionalExpression,
+    ) -> Result<(), Error> {
+        let mut attribute_names = update.get_expression_attribute_names();
+        attribute_names.extend(condition.get_expression_attribute_names());
+
+        let mut attribute_values = update.get_expression_attribute_values();
+        attribute_values.extend(condition.get_expression_attribute_values());
+
+        self.client
+            .update_item()
+            .table_name(&self.table_name)
+            .set_key(Some(key_value.clone().into_hash_map()))
+            .update_expression(update.to_string())
+            .condition_expression(condition.to_string())
+            .set_expression_attribute_names(Some(attribute_names))
+            .set_expression_attribute_values(Some(attribute_values))
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+                eprintln!(
+                    "Error : {:?},  Key: {:?}, update expression: {:?}, condition expression: {:?}",
+                    e, key_value, update, condition
+                );
+                Error::sdk_error("Dynamodb delete item failed.", e)
+            })
+    }
+
     pub async fn delete(&self, key_value: KeyValue) -> Result<(), Error> {
-        self.delete_with_condition(key_value, None).await
+        self.client
+            .delete_item()
+            .table_name(self.table_name.clone())
+            .set_key(Some(key_value.clone().into_hash_map()))
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+                eprintln!("Error : {:?},  Key: {:?} ", e, key_value);
+                Error::sdk_error("Dynamodb delete item failed.", e)
+            })
     }
 
     pub async fn delete_with_sort_key<T: AsPkAvailableCompositeKeyValue>(
@@ -256,31 +325,29 @@ impl<'a> DynamodbTable<'a> {
     pub async fn delete_with_condition(
         &self,
         key_value: KeyValue,
-        conditional_expression: Option<Expression>,
+        conditional_expression: ConditionalExpression,
     ) -> Result<(), Error> {
-        let mut delete_builder = self
-            .client
+        self.client
             .delete_item()
             .table_name(self.table_name.clone())
-            .set_key(Some(key_value.clone().into_hash_map()));
-
-        if let Some(conditional_expression) = &conditional_expression {
-            delete_builder = delete_builder
-                .condition_expression(conditional_expression.to_string())
-                .set_expression_attribute_names(Some(
-                    conditional_expression.get_expression_attribute_names(),
-                ))
-                .set_expression_attribute_values(Some(
-                    conditional_expression.get_expression_attribute_values(),
-                ));
-        }
-        delete_builder.send().await.map(|_| ()).map_err(|e| {
-            eprintln!(
-                "Error : {:?},  Key: {:?} Conditional expression: {:?}",
-                e, key_value, conditional_expression
-            );
-            Error::sdk_error("Dynamodb delete item failed.", e)
-        })
+            .set_key(Some(key_value.clone().into_hash_map()))
+            .condition_expression(conditional_expression.to_string())
+            .set_expression_attribute_names(Some(
+                conditional_expression.get_expression_attribute_names(),
+            ))
+            .set_expression_attribute_values(Some(
+                conditional_expression.get_expression_attribute_values(),
+            ))
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+                eprintln!(
+                    "Error : {:?},  Key: {:?} Conditional expression: {:?}",
+                    e, key_value, conditional_expression
+                );
+                Error::sdk_error("Dynamodb delete item failed.", e)
+            })
     }
 
     /// Performs batch_write in parallel. `parallel_count` dertermines how many parallel batch_wirte is called. <br>
@@ -297,7 +364,11 @@ impl<'a> DynamodbTable<'a> {
         for parallel_batch_chunk in batch_chunks(batch_chunks(items, 25), parallel_count) {
             let mut tasks: Vec<_> = vec![];
             for x in parallel_batch_chunk {
-                tasks.push(self._batch_write(self.operations_into_write_requests(x)?, max_retry, None));
+                tasks.push(self._batch_write(
+                    self.operations_into_write_requests(x)?,
+                    max_retry,
+                    None,
+                ));
             }
 
             for result in join_all(tasks).await {
@@ -368,7 +439,6 @@ impl<'a> DynamodbTable<'a> {
 
         return Ok(());
     }
-
 
     fn operations_into_write_requests(
         &self,
@@ -459,8 +529,7 @@ impl<'a> DynamodbTable<'a> {
     }
 }
 
-fn batch_chunks<T>(mut items: Vec<T>, batch_size: usize) -> Vec<Vec<T>>
-{
+fn batch_chunks<T>(mut items: Vec<T>, batch_size: usize) -> Vec<Vec<T>> {
     let mut result: Vec<Vec<T>> = vec![];
     let mut batch: Vec<T> = vec![];
 

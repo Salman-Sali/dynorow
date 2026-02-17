@@ -3,7 +3,14 @@ use std::collections::HashMap;
 use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::{
-    Expression, dynamodb_context::expression::expression_builder::BuildExpression, error::Error,
+    ConditionalExpression,
+    dynamodb_context::expression::conditional::expression_builder::BuildConditionalExpression,
+    error::Error,
+    traits::{
+        has_pk_value::HasStaticPkValue, has_pk_value_template::HasPkValueTemplate,
+        has_sort_key::HasSortKey, into_attribute_value::IntoAttributeValue,
+        matches_template::MatchesTemplate,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -44,7 +51,10 @@ impl Key {
         }
     }
 
-    pub fn into_partition_key_value(self, partition_key_value: String) -> KeyValue {
+    pub fn into_partition_key_value(
+        self,
+        partition_key_value: impl IntoAttributeValue,
+    ) -> KeyValue {
         let partition_key = match self {
             Key::CompositeKey {
                 partition_key,
@@ -88,22 +98,63 @@ pub enum KeyValue {
 impl KeyValue {
     pub fn new_composite_key(
         partition_key: String,
-        partition_key_value: String,
+        partition_key_value: impl IntoAttributeValue,
         sort_key: String,
-        sort_key_value: String,
+        sort_key_value: impl IntoAttributeValue,
     ) -> Self {
         Self::CompositeKey {
             partition_key,
-            partition_key_value: AttributeValue::S(partition_key_value),
+            partition_key_value: partition_key_value.into_attribute_value(),
             sort_key: sort_key.into(),
-            sort_key_value: AttributeValue::S(sort_key_value),
+            sort_key_value: sort_key_value.into_attribute_value(),
         }
     }
 
-    pub fn new_partition_key(key: String, value: String) -> Self {
+    pub fn get_partition_key_value(&self) -> AttributeValue {
+        match &self {
+            KeyValue::CompositeKey {
+                partition_key: _,
+                partition_key_value: pk_value,
+                sort_key: _,
+                sort_key_value: _,
+            }
+            | KeyValue::PartitionKey {
+                key: _,
+                value: pk_value,
+            } => pk_value.clone(),
+        }
+    }
+
+    pub fn into_partition_key_value(self) -> Self {
+        match self {
+            KeyValue::CompositeKey {
+                partition_key: pk,
+                partition_key_value: pk_value,
+                sort_key: _,
+                sort_key_value: _,
+            }
+            | KeyValue::PartitionKey {
+                key: pk,
+                value: pk_value,
+            } => Self::new_partition_key(pk, pk_value),
+        }
+    }
+
+    pub fn pk_equals<T: HasStaticPkValue>(&self) -> bool {
+        T::get_static_pk_value().into_attribute_value() == self.get_partition_key_value()
+    }
+
+    pub fn matches_pk_template<T: HasPkValueTemplate>(&self) -> bool {
+        if let Ok(value) = self.get_partition_key_value().as_s() {
+            return T::matches_template(value);
+        }
+        return false;
+    }
+
+    pub fn new_partition_key(key: String, value: impl IntoAttributeValue) -> Self {
         Self::PartitionKey {
             key,
-            value: AttributeValue::S(value),
+            value: value.into_attribute_value(),
         }
     }
 
@@ -116,6 +167,29 @@ impl KeyValue {
                 sort_key_value: _,
             } => format!("{}, {}", partition_key, sort_key),
             KeyValue::PartitionKey { key, value: _ } => key.clone(),
+        }
+    }
+
+    pub fn with_composite_key_value<T: HasSortKey>(
+        self,
+        sk_value: impl IntoAttributeValue,
+    ) -> Self {
+        match self {
+            KeyValue::CompositeKey {
+                partition_key: pk,
+                partition_key_value: pk_value,
+                sort_key: _,
+                sort_key_value: _,
+            }
+            | KeyValue::PartitionKey {
+                key: pk,
+                value: pk_value,
+            } => KeyValue::CompositeKey {
+                partition_key: pk,
+                partition_key_value: pk_value,
+                sort_key: T::get_sort_key(),
+                sort_key_value: sk_value.into_attribute_value(),
+            },
         }
     }
 
@@ -194,7 +268,7 @@ impl KeyValue {
         }
     }
 
-    pub fn into_conditional_expression(self) -> Expression {
+    pub fn into_conditional_expression(self) -> ConditionalExpression {
         match self {
             KeyValue::CompositeKey {
                 partition_key,
@@ -221,19 +295,18 @@ impl KeyValue {
                     return value.contains(partial_pk_value);
                 }
                 return false;
-            },
+            }
             KeyValue::PartitionKey { key: _, value } => {
                 if let Ok(value) = value.as_s() {
                     return value.contains(partial_pk_value);
                 }
                 return false;
-
-            },
+            }
         }
     }
 
     pub fn is_partition_key_value_equal(&self, pk_value: &str) -> bool {
-       match self {
+        match self {
             KeyValue::CompositeKey {
                 partition_key: _,
                 partition_key_value,
@@ -244,37 +317,39 @@ impl KeyValue {
                     return value == pk_value;
                 }
                 return false;
-            },
+            }
             KeyValue::PartitionKey { key: _, value } => {
                 if let Ok(value) = value.as_s() {
                     return value == pk_value;
                 }
                 return false;
-
-            },
+            }
         }
     }
 
-    pub fn is_partition_key_value_starts_and_ends_with(&self, partial_pk_value: &str, end_pk_value: &str,) -> bool {
-            match self {
-                KeyValue::CompositeKey {
-                    partition_key: _,
-                    partition_key_value,
-                    sort_key: _,
-                    sort_key_value: _,
-                } => {
-                    if let Ok(value) = partition_key_value.as_s() {
-                        return value.starts_with(partial_pk_value) && value.ends_with(end_pk_value);
-                    }
-                    return false;
-                },
-                KeyValue::PartitionKey { key: _, value } => {
-                    if let Ok(value) = value.as_s() {
-                        return value.starts_with(partial_pk_value) && value.ends_with(end_pk_value);
-                    }
-                    return false;
-
-                },
+    pub fn is_partition_key_value_starts_and_ends_with(
+        &self,
+        partial_pk_value: &str,
+        end_pk_value: &str,
+    ) -> bool {
+        match self {
+            KeyValue::CompositeKey {
+                partition_key: _,
+                partition_key_value,
+                sort_key: _,
+                sort_key_value: _,
+            } => {
+                if let Ok(value) = partition_key_value.as_s() {
+                    return value.starts_with(partial_pk_value) && value.ends_with(end_pk_value);
+                }
+                return false;
+            }
+            KeyValue::PartitionKey { key: _, value } => {
+                if let Ok(value) = value.as_s() {
+                    return value.starts_with(partial_pk_value) && value.ends_with(end_pk_value);
+                }
+                return false;
             }
         }
+    }
 }

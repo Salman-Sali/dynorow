@@ -8,8 +8,9 @@ pub enum FieldType {
     u32,
     f32,
     bool,
-    VecString,
-    SerdeJson(String),
+    Vec(String),
+    HashSet(String),
+    Map(String),
 }
 
 impl Display for FieldType {
@@ -20,8 +21,9 @@ impl Display for FieldType {
             FieldType::u32 => write!(f, "u32"),
             FieldType::f32 => write!(f, "f32"),
             FieldType::bool => write!(f, "bool"),
-            FieldType::VecString => write!(f, "Vec<String>"),
-            FieldType::SerdeJson(x) => write!(f, "{}", x),
+            FieldType::Vec(x) => write!(f, "{}", x),
+            FieldType::HashSet(x) => write!(f, "{}", x),
+            FieldType::Map(x) => write!(f, "{}", x),
         }
     }
 }
@@ -34,8 +36,15 @@ impl From<String> for FieldType {
             "u32" => Self::u32,
             "f32" => Self::f32,
             "bool" => Self::bool,
-            "Vec < String >" => Self::VecString,
-            _ => Self::SerdeJson(value),
+            x => {
+                if x.starts_with("Vec <") {
+                    Self::Vec(value)
+                } else if x.starts_with("HashSet <") {
+                    Self::HashSet(value)
+                } else {
+                    Self::Map(value)
+                }
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 use field_info::FieldInfo;
 use key::Key;
+use regex::Regex;
 use syn::{Data, DeriveInput, Fields};
 
 pub mod field_info;
@@ -10,46 +11,58 @@ pub struct StructInfo {
     pub struct_name: String,
     pub pk: Option<String>,
     pub pk_value: Option<String>,
+    pub pk_value_parts: Vec<String>,
     pub fields: Vec<FieldInfo>,
     pub table_name_provider: Option<String>,
+    pub dynorow: bool,
 }
 
-impl From<DeriveInput> for StructInfo {
-    fn from(input: DeriveInput) -> Self {
-        let mut struct_info = Self::new(input.ident.to_string());
+impl StructInfo {
+    pub fn new(input: DeriveInput, dynorow: bool) -> Self {
+        let mut struct_info = Self {
+            struct_name: input.ident.to_string(),
+            pk: None,
+            pk_value: None,
+            fields: vec![],
+            table_name_provider: None,
+            dynorow,
+            pk_value_parts: vec![],
+        };
 
-        for attribute in input.attrs {
-            if !attribute.path().is_ident("dynorow") {
-                continue;
-            }
-
-            let _ = attribute.parse_nested_meta(|meta| {
-                let Some(ident) = meta.path.get_ident() else {
-                    return Ok(());
-                };
-                match ident.to_string().as_str() {
-                    "pk" => {
-                        let Ok(key) = meta.value() else {
-                            panic!("Error while getting pk key for struct.");
-                        };
-                        struct_info.set_pk(key.to_string());
-                    }
-                    "pk_value" => {
-                        let Ok(value) = meta.value() else {
-                            panic!("Error while getting pk key value for struct.");
-                        };
-                        struct_info.set_pk_value(value.to_string());
-                    }
-                    "table" => {
-                        let Ok(value) = meta.value() else {
-                            panic!("Error while getting pk key value for struct.");
-                        };
-                        struct_info.table_name_provider = Some(value.to_string());
-                    }
-                    _ => {}
+        if struct_info.dynorow {
+            for attribute in input.attrs {
+                if !attribute.path().is_ident("dynorow") {
+                    continue;
                 }
-                return Ok(());
-            });
+
+                let _ = attribute.parse_nested_meta(|meta| {
+                    let Some(ident) = meta.path.get_ident() else {
+                        return Ok(());
+                    };
+                    match ident.to_string().as_str() {
+                        "pk" => {
+                            let Ok(key) = meta.value() else {
+                                panic!("Error while getting pk key for struct.");
+                            };
+                            struct_info.set_pk(key.to_string());
+                        }
+                        "pk_value" => {
+                            let Ok(value) = meta.value() else {
+                                panic!("Error while getting pk key value for struct.");
+                            };
+                            struct_info.set_pk_value(value.to_string());
+                        }
+                        "table" => {
+                            let Ok(value) = meta.value() else {
+                                panic!("Error while getting pk key value for struct.");
+                            };
+                            struct_info.table_name_provider = Some(value.to_string());
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                });
+            }
         }
 
         let fields = if let Data::Struct(data) = input.data {
@@ -70,25 +83,39 @@ impl From<DeriveInput> for StructInfo {
 
         return struct_info;
     }
-}
 
-impl StructInfo {
-    pub fn new(struct_name: String) -> Self {
-        Self {
-            struct_name,
-            pk: None,
-            pk_value: None,
-            fields: vec![],
-            table_name_provider: None,
-        }
+    pub fn is_static_pk_value(&self) -> bool {
+        self.pk_value.is_some() && self.pk_value_parts.is_empty()
+    }
+
+    pub fn is_generated_pk_value(&self) -> bool {
+        self.pk_value.is_some() && !self.pk_value_parts.is_empty()
     }
 
     pub fn set_pk(&mut self, pk: String) {
         self.pk = Some(pk.replace("\"", ""));
     }
 
-    pub fn set_pk_value(&mut self, pk_value: String) {
-        self.pk_value = Some(pk_value.replace("\"", ""));
+    pub fn set_pk_value(&mut self, mut pk_value: String) {
+        pk_value = pk_value.replace("\"", "");
+        let regex = Regex::new(r"\{([^}]*)\}").unwrap();
+
+        let pk_value_clone = pk_value.clone();
+        let finds: Vec<_> = regex.find_iter(&pk_value_clone).collect();
+
+        let mut arguments = vec![];
+
+        for find in finds {
+            let argument = find
+                .as_str()
+                .trim_start_matches("{")
+                .trim_end_matches("}")
+                .to_string();
+            pk_value = pk_value.replace(&argument, "");
+            arguments.push(argument);
+        }
+        self.pk_value_parts = arguments;
+        self.pk_value = Some(pk_value);
     }
 
     pub fn find_in_handled_fields(&self, field_name: &str) -> Option<&FieldInfo> {
@@ -157,6 +184,10 @@ impl StructInfo {
     }
 
     fn panic_at_errors(&self) {
+        if !self.dynorow {
+            return;
+        }
+
         let struct_has_pk = self.struct_has_pk();
         let struct_has_pk_value = self.struct_has_pk_value();
         let pk_field = self.fields.iter().find(|x| matches!(x.key, Key::Pk(_)));
