@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use aws_lambda_events::dynamodb::EventRecord;
 use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::{
@@ -10,6 +11,7 @@ use crate::{
         has_pk_value::HasStaticPkValue, has_pk_value_template::HasPkValueTemplate,
         has_sort_key::HasSortKey, into_attribute_value::IntoAttributeValue,
         matches_template::MatchesTemplate,
+        serde_dynamo_attribute_value_into::SerdeDynamoAttributeValueHashMapInto,
     },
 };
 
@@ -220,6 +222,16 @@ impl KeyValue {
             key: partition_key,
             value: partition_key_value.clone(),
         });
+    }
+
+    pub fn from_event_record(event_record: EventRecord, key: Key) -> Result<KeyValue, Error> {
+        let key_value_hash_map = event_record
+            .change
+            .keys
+            .clone()
+            .into_inner()
+            .into_aws_attribute_value_hashmap();
+        KeyValue::from_hash_map(key_value_hash_map, key)
     }
 
     pub fn into_hash_map(self) -> HashMap<String, AttributeValue> {

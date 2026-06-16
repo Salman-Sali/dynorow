@@ -2,6 +2,7 @@ mod dynamodb_context;
 pub mod dynamodb_sdk_extensions;
 pub mod error;
 pub mod key;
+pub mod streams;
 pub mod traits;
 
 extern crate dynorow_derive;
